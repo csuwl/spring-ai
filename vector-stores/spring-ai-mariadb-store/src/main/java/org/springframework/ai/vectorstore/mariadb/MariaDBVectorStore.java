@@ -192,21 +192,24 @@ public class MariaDBVectorStore extends AbstractObservationVectorStore implement
 	@Override
 	public void doAdd(List<Document> documents) {
 		// Batch the documents based on the batching strategy
-		this.embeddingModel.embed(documents, EmbeddingOptionsBuilder.builder().build(), this.batchingStrategy);
+		List<float[]> embedding = this.embeddingModel.embed(documents, EmbeddingOptionsBuilder.builder().build(),
+				this.batchingStrategy);
 
-		List<List<Document>> batchedDocuments = batchDocuments(documents);
-		batchedDocuments.forEach(this::insertOrUpdateBatch);
+		batchInsertDocuments(documents, embedding);
 	}
 
-	private List<List<Document>> batchDocuments(List<Document> documents) {
-		List<List<Document>> batches = new ArrayList<>();
+	private void batchInsertDocuments(List<Document> documents, List<float[]> embedding) {
+		// Divide batches into small batches and insert them into the database separately
 		for (int i = 0; i < documents.size(); i += this.maxDocumentBatchSize) {
-			batches.add(documents.subList(i, Math.min(i + this.maxDocumentBatchSize, documents.size())));
+			List<Document> subDocuments = documents.subList(i,
+					Math.min(i + this.maxDocumentBatchSize, documents.size()));
+			List<float[]> subEmbeddings = embedding.subList(i,
+					Math.min(i + this.maxDocumentBatchSize, documents.size()));
+			insertOrUpdateBatch(subDocuments, subEmbeddings);
 		}
-		return batches;
 	}
 
-	private void insertOrUpdateBatch(List<Document> batch) {
+	private void insertOrUpdateBatch(List<Document> batch, List<float[]> embeddings) {
 		String sql = String.format(
 				"INSERT INTO %s (%s, %s, %s, %s) VALUES (?, ?, ?, ?) "
 						+ "ON DUPLICATE KEY UPDATE %s = VALUES(%s) , %s = VALUES(%s) , %s = VALUES(%s)",
@@ -222,7 +225,7 @@ public class MariaDBVectorStore extends AbstractObservationVectorStore implement
 				ps.setObject(1, document.getId());
 				ps.setString(2, document.getContent());
 				ps.setString(3, toJson(document.getMetadata()));
-				ps.setObject(4, document.getEmbedding());
+				ps.setObject(4, embeddings.get(i));
 			}
 
 			@Override
